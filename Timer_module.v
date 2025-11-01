@@ -1,118 +1,90 @@
-module Timer_module
-(	
-	RSTn, CLK, Start, Timer_Start, Answer, TimerH, TimerL, Buzzer_TimeOver, LED_OverTime, TimeOver_Block, TimeOver_Stop
+// Countdown timer with overtime signalling.
+module Timer_module (
+    input        RSTn,
+    input        CLK,
+    input        Start,
+    input        Timer_Start,
+    input        Answer,
+    output reg [3:0] TimerH,
+    output reg [3:0] TimerL,
+    output reg       Buzzer_TimeOver,
+    output reg       LED_OverTime,
+    output reg       TimeOver_Block,
+    output reg       TimeOver_Stop
 );
-	 input RSTn;
-	 input CLK; 
-     input Start;
-	 input Timer_Start;
-     input Answer; 
-     
-	 output reg [3:0]TimerH;
-	 output reg [3:0]TimerL;
-	 output reg Buzzer_TimeOver;
-	 output reg LED_OverTime;
-	 output reg TimeOver_Block;
-     output reg TimeOver_Stop;
-     
-	 reg count1=0;
-	 reg CLK1; 
-	 reg [24:0]Count;
-     
-	 parameter T1S = 25'd25_000_000;		
 
-	always @ (posedge CLK or negedge RSTn)
-		begin 
-			if ( !RSTn )
-				 begin
-					 Count <= 0;
-					 CLK1 <= 0;
-				 end				
-			else if ( Start == 0 )  
-				begin
-					if ( Count == T1S - 25'b1 )
-						 begin
-							 Count <= 0;
-							 CLK1 <= ~CLK1;		
-						 end
-					else
-					   Count <= Count + 1;
-				end
-		end
+    localparam [24:0] T1S = 25'd25_000_000;
 
-	always @ ( posedge CLK1 or negedge RSTn )
-		begin
-			if( !RSTn )  		
-				begin
-					TimerH <= 4'd9;
-				end
-			else if( Start == 0 )		
-				begin
-                    if( Timer_Start == 1 )
-                        TimerH <= TimerH;
-                    else if( TimerH == 4'd0 )
-                        TimerH <= TimerH;
-                    else     
-					    TimerH <= TimerH - 1'b1;
-				end
-		end
-	
-	always @ ( posedge CLK1 or negedge RSTn )
-		begin
-			if( !RSTn )  		
-				begin
-					TimerL <= 4'd5;
-				end
-			else if( Timer_Start == 1 )		
-				begin
-                    if( Answer == 0 )
-                        TimerL <= TimerL;
-                    else if( TimerL == 4'd0 )
-                        TimerL <= TimerL;
-                    else     
-						TimerL <= TimerL - 1'b1;
-				end
-		end
+    reg        clk_div;
+    reg [24:0] count;
+    reg        pulse_state;
 
-	always @ ( posedge CLK1 )
-		begin
-			if( TimerH == 'd1 | TimerL == 'd1 ) 	
-				begin
-                    if( count1 == 1'b1 )
-						begin
-							Buzzer_TimeOver <= 0;
-							LED_OverTime <= 0;
-							count1 <= 0;
-						end
-					else
-						begin
-							Buzzer_TimeOver <= 1;		
-							LED_OverTime <= 1;		
-							count1 <= count1 + 1'b1;
-						end
-				end
-			else
-				begin
-					Buzzer_TimeOver <= 0;
-					LED_OverTime <= 0;
-					count1 <= 0;			
-				end
-		end	
-	always @ ( posedge CLK or negedge RSTn )	
-		begin
-			if( !RSTn )  		
-				begin
-					TimeOver_Block <= 0;
-                    TimeOver_Stop <= 0;
-				end
-			else if( TimerH == 'd0 | TimerL == 'd0 )		
-				begin
-                    TimeOver_Block <= 1;
-                    TimeOver_Stop <= 1;
-				end
-		end   
-         
+    // 1 Hz clock divider (assuming 50 MHz input clock).
+    always @(posedge CLK or negedge RSTn) begin
+        if (!RSTn) begin
+            count   <= 25'd0;
+            clk_div <= 1'b0;
+        end else if (!Start) begin
+            if (count == T1S - 1'b1) begin
+                count   <= 25'd0;
+                clk_div <= ~clk_div;
+            end else begin
+                count <= count + 1'b1;
+            end
+        end
+    end
+
+    // High digit counts down from 9.
+    always @(posedge clk_div or negedge RSTn) begin
+        if (!RSTn || Start) begin
+            TimerH <= 4'd9;
+        end else if (!Timer_Start && TimerH != 4'd0) begin
+            TimerH <= TimerH - 1'b1;
+        end
+    end
+
+    // Low digit counts down from 5 once the answer period begins.
+    always @(posedge clk_div or negedge RSTn) begin
+        if (!RSTn || Start) begin
+            TimerL <= 4'd5;
+        end else if (Timer_Start) begin
+            if (Answer && TimerL != 4'd0) begin
+                TimerL <= TimerL - 1'b1;
+            end
+        end else begin
+            TimerL <= 4'd5;
+        end
+    end
+
+    // Blink the overtime indicators when one of the counters reaches 1.
+    always @(posedge clk_div or negedge RSTn) begin
+        if (!RSTn) begin
+            Buzzer_TimeOver <= 1'b0;
+            LED_OverTime    <= 1'b0;
+            pulse_state     <= 1'b0;
+        end else if ((TimerH == 4'd1) || (TimerL == 4'd1)) begin
+            pulse_state     <= ~pulse_state;
+            Buzzer_TimeOver <= ~pulse_state;
+            LED_OverTime    <= ~pulse_state;
+        end else begin
+            pulse_state     <= 1'b0;
+            Buzzer_TimeOver <= 1'b0;
+            LED_OverTime    <= 1'b0;
+        end
+    end
+
+    // Flag that the timer expired.
+    always @(posedge CLK or negedge RSTn) begin
+        if (!RSTn) begin
+            TimeOver_Block <= 1'b0;
+            TimeOver_Stop  <= 1'b0;
+        end else if (Start) begin
+            TimeOver_Block <= 1'b0;
+            TimeOver_Stop  <= 1'b0;
+        end else if ((TimerH == 4'd0) || (TimerL == 4'd0)) begin
+            TimeOver_Block <= 1'b1;
+            TimeOver_Stop  <= 1'b1;
+        end
+    end
+
 endmodule
-
-	
-	
